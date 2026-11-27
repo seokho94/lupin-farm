@@ -9,8 +9,8 @@ namespace LupinFarm.Tests
         public static void TestStartsAtBase()
         {
             var s = GameState.NewRun(1, 7);
-            Assert.Equal(30.0, Market.Price(s, "turnip"), "turnip base in spring");
-            Assert.Equal(195.0, Market.Price(s, "corn"), "corn is off-season in spring: 150 x 1.3");
+            Assert.Equal(Content.Crop("turnip").BasePrice, Market.Price(s, "turnip"), "turnip base in spring");
+            Assert.True(Math.Abs(Market.Price(s, "corn") - Content.Crop("corn").BasePrice * Content.OffSeasonMultiplier) <= 0.5, "corn is off-season in spring: base x 1.3");
         }
 
         public static void TestDailyUpdateIsReproducible()
@@ -43,11 +43,12 @@ namespace LupinFarm.Tests
             var s = GameState.NewRun(1, 1);
             var q = Market.Sell(s, "turnip", 100);
             Assert.True(Math.Abs(s.MarketOf("turnip").F - Math.Pow(0.998, 100)) < 1e-9, "factor x 0.998^100");
+            double b = Content.Crop("turnip").BasePrice;
             double loop = 0;
-            for (int i = 0; i < 100; i++) loop += 30 * Math.Pow(0.998, i);
+            for (int i = 0; i < 100; i++) loop += b * Math.Pow(0.998, i);
             Assert.Equal(Math.Round(loop), q.Total, "closed form = per-unit sum");
-            Assert.Equal(30.0, q.UnitBefore, "unit before");
-            Assert.Equal(25.0, q.UnitAfter, "unit after (30 x 0.819)");
+            Assert.Equal(b, q.UnitBefore, "unit before");
+            Assert.Equal(Math.Round(b * Math.Pow(0.998, 100)), q.UnitAfter, "unit after (base x 0.819)");
         }
 
         public static void TestPriceFloor()
@@ -55,9 +56,10 @@ namespace LupinFarm.Tests
             var s = GameState.NewRun(1, 1);
             var q = Market.Sell(s, "turnip", 100000);
             Assert.Equal(Content.MarketMin, s.MarketOf("turnip").F, "stops at 0.5");
-            Assert.True(q.Total > 100000 * 30 * 0.5 && q.Total < 100000 * 30 * 0.51, "most units at the floor");
+            double b = Content.Crop("turnip").BasePrice;
+            Assert.True(q.Total > 100000 * b * 0.5 && q.Total < 100000 * b * 0.51, "most units at the floor");
             q = Market.Quote(s, "turnip", 10);
-            Assert.Equal(150.0, q.Total, "at the floor: 10 x 15");
+            Assert.Equal(Math.Round(10 * b * Content.MarketMin), q.Total, "at the floor: 10 x half price");
         }
     }
 
@@ -95,14 +97,15 @@ namespace LupinFarm.Tests
             Game.Ok("/unlock strawberry");
             Game.State.Tools["sickle"] = 3;
             var a1 = Game.Plot(0, "A1");
+            var berry = Content.Crop("strawberry");
             a1.Crop = "strawberry";
-            a1.Growth = 6 * 1440;
+            a1.Growth = berry.GrowMinutes;
             Game.Ok("/harvest A1");
             Assert.Equal("strawberry", a1.Crop, "regrows in spring");
-            Assert.Equal(3 * 1440, a1.Growth, "back to 6 - 3 days");
+            Assert.Equal(berry.GrowMinutes - berry.RegrowMinutes, a1.Growth, "back to grow - regrow days");
 
             Engine.Advance(Game.State, 7 * 1440);
-            a1.Growth = 6 * 1440;
+            a1.Growth = berry.GrowMinutes;
             Game.Ok("/harvest A1");
             Assert.Equal(null, a1.Crop, "summer: plot is cleared");
         }
@@ -171,8 +174,9 @@ namespace LupinFarm.Tests
             Game.New();
             Game.State.Storage["turnip"] = 30;
             Game.Ok("/sell turnip 30");
-            Assert.True(Market.Price(Game.State, "turnip") < 30, "price dropped");
-            Assert.True(Game.State.Gold > 100 + 30 * 28 && Game.State.Gold < 100 + 30 * 30, "a bit under 900G");
+            double b = Content.Crop("turnip").BasePrice;
+            Assert.True(Market.Price(Game.State, "turnip") < b, "price dropped");
+            Assert.True(Game.State.Gold > 100 + 30 * (b - 2) && Game.State.Gold < 100 + 30 * b, "a bit under 30 x base");
         }
 
         public static void TestSaveKeepsMarket()

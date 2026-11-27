@@ -48,6 +48,7 @@ namespace LupinFarm.Data
             { 'I', 0x5B7FD6 }, // 루피너스 파랑
             { 'j', 0xD9CCF5 }, // 꽃봉오리·꽃잎
             { 'Q', 0x6FC3F7 }, // 스프링클러 범위 테두리 (M4 K23)
+            { 'Z', 0xFFD54F }, // 스프링클러 설치·업그레이드 미리 보기 테두리 (M5 K9)
         };
 
         /// <summary>계절별 풀 색 (M2 K9): 봄, 여름, 가을, 겨울. [계절, 0=g / 1=G]</summary>
@@ -563,5 +564,8 @@ namespace LupinFarm.Data
 
         /// <summary>스프링클러 범위(스프링클러 + 물 받는 칸)의 바깥 선 색 (M4 K23).</summary>
         public const char RangeEdge = 'Q';
+
+        /// <summary>설치·업그레이드 미리 보기 범위의 바깥 선 색 (M5 K9). 밤에도 어둡게 하지 않는다.</summary>
+        public const char PreviewEdge = 'Z';
     }
 }

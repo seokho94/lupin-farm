@@ -58,20 +58,23 @@ namespace LupinFarm.Data
         public const int MinWidth = 120;
         public const int MinHeight = 30;
 
+        /// <summary>이 폭 이상이면 농장 영역에 구역 2개를 나란히 그린다 (M5 K3): 칸 그림 80칸 × 2 + 줄 이름·여백 + 정보 칸 32칸.</summary>
+        public const int WideWidth = 204;
+
         public static readonly string[] Tools = { "can", "bag", "sickle" };
 
         public static readonly CropDef[] Crops =
         {
-            new CropDef("turnip",     new[] { 0 },    0,    10,  30,  2, 0),
-            new CropDef("potato",     new[] { 0 },    200,  25,  80,  4, 0),
-            new CropDef("strawberry", new[] { 0 },    1500, 80,  55,  6, 3),
-            new CropDef("corn",       new[] { 1, 2 }, 0,    60,  150, 7, 0),
-            new CropDef("tomato",     new[] { 1 },    600,  40,  45,  5, 3),
-            new CropDef("melon",      new[] { 1 },    4000, 150, 500, 10, 0),
-            new CropDef("carrot",     new[] { 2 },    0,    20,  50,  3, 0),
-            new CropDef("eggplant",   new[] { 2 },    900,  50,  40,  5, 2),
-            new CropDef("pumpkin",    new[] { 2 },    5000, 100, 380, 10, 0),
-            new CropDef("mushroom",   new[] { 3 },    300,  30,  70,  3, 0),
+            new CropDef("turnip",     new[] { 0 },    0,    10,  45,  2, 0),
+            new CropDef("potato",     new[] { 0 },    200,  25,  120, 4, 0),
+            new CropDef("strawberry", new[] { 0 },    1500, 40,  75,  3, 1),
+            new CropDef("corn",       new[] { 1, 2 }, 0,    60,  225, 7, 0),
+            new CropDef("tomato",     new[] { 1 },    600,  30,  120, 3, 2),
+            new CropDef("melon",      new[] { 1 },    4000, 150, 750, 10, 0),
+            new CropDef("carrot",     new[] { 2 },    0,    20,  75,  3, 0),
+            new CropDef("eggplant",   new[] { 2 },    900,  30,  80,  2, 2),
+            new CropDef("pumpkin",    new[] { 2 },    5000, 100, 630, 10, 0),
+            new CropDef("mushroom",   new[] { 3 },    300,  30,  105, 3, 0),
         };
 
         static readonly Dictionary<string, CropDef> cropById = new Dictionary<string, CropDef>(StringComparer.OrdinalIgnoreCase);
@@ -104,13 +107,13 @@ namespace LupinFarm.Data
         /// <summary>구역 n(1부터)의 다음 칸 가격.</summary>
         public static double PlotCost(int fieldNumber, int boughtInField)
         {
-            return Math.Round(50 * Math.Pow(10, fieldNumber - 1) * Math.Pow(1.12, boughtInField));
+            return Math.Round(50 * Math.Pow(2, fieldNumber - 1) * Math.Pow(1.06, boughtInField));
         }
 
         /// <summary>새 구역 n(2부터)의 가격.</summary>
         public static double FieldCost(int fieldNumber)
         {
-            return 20000 * Math.Pow(10, fieldNumber - 2);
+            return 8000 * Math.Pow(2.5, fieldNumber - 2);
         }
 
         // ---------------------------------------------------------- 창고 (02 3.4절, M2 K6)
@@ -169,11 +172,11 @@ namespace LupinFarm.Data
         {
             switch (id)
             {
-                case "sprinkler": return 500;
-                case "harvester": return 3000;
+                case "sprinkler": return 300;
+                case "harvester": return 1500;
                 case "planter": return 5000;
                 case "greenhouse": return 50000;
-                case "shipping-bin": return 2000;
+                case "shipping-bin": return 1000;
                 case "auto-buyer": return 4000;
             }
             return -1;
@@ -209,11 +212,11 @@ namespace LupinFarm.Data
 
         public const int MaxControllerLevel = 20;
 
-        /// <summary>컨트롤러 다음 레벨 비용. Lv1 1,500G, Lv2 8,000G, Lv3 40,000G, 이후 ×5. 최대면 -1.</summary>
+        /// <summary>컨트롤러 다음 레벨 비용. Lv1 1,000G (M5 밸런스), Lv2 8,000G, Lv3 40,000G, 이후 ×5. 최대면 -1.</summary>
         public static double ControllerCost(int currentLevel)
         {
             if (currentLevel >= MaxControllerLevel) return -1;
-            if (currentLevel <= 0) return 1500;
+            if (currentLevel <= 0) return 1000;
             if (currentLevel == 1) return 8000;
             return 40000 * Math.Pow(5, currentLevel - 2);
         }

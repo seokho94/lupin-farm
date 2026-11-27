@@ -1,7 +1,7 @@
 @echo off
 rem Lupin Farm build: Windows built-in .NET Framework 4 compiler (C# 5). No install needed.
 rem   build.bat        -> bin\lupin.exe
-rem   build.bat test   -> bin\tests.exe and run it
+rem   build.bat test   -> bin\tests.exe and run it (bin\tests.exe balance = balance report)
 setlocal
 cd /d "%~dp0"
 
@@ -26,7 +26,7 @@ echo [OK] bin\lupin.exe
 exit /b 0
 
 :test
-"%CSC%" %FLAGS% /out:bin\tests.exe /recurse:src\Core\*.cs /recurse:src\Data\*.cs /recurse:src\Storage\*.cs /recurse:tests\*.cs
+"%CSC%" %FLAGS% /out:bin\tests.exe /recurse:src\Core\*.cs /recurse:src\Data\*.cs /recurse:src\Storage\*.cs /recurse:src\Ui\*.cs /recurse:tests\*.cs
 if errorlevel 1 (
   echo [ERROR] test build failed
   exit /b 1

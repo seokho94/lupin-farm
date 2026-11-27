@@ -34,6 +34,24 @@ namespace LupinFarm.Core
         BossKeyChanged,
         Reset,
         Prestige,
+
+        /// <summary>/save: 저장 폴더·내보낸 파일 안내 (M5 K6). 파일은 화면(App)이 다룬다.</summary>
+        SaveInfo,
+
+        /// <summary>/save export [경로] (M5 K6). 경로는 CommandResult.Path.</summary>
+        SaveExport,
+
+        /// <summary>/save import &lt;경로&gt; (M5 K7).</summary>
+        SaveImport,
+    }
+
+    /// <summary>스프링클러 설치·업그레이드 미리 보기 (M5 K9): 구역, 칸, 놓을(올린) 레벨, 범위(자기 칸 포함).</summary>
+    public sealed class SprinklerPreview
+    {
+        public int Field;
+        public int Cell;
+        public int Level;
+        public bool[] Range;
     }
 
     public sealed class CommandResult
@@ -44,6 +62,9 @@ namespace LupinFarm.Core
         public int ViewField = -1;
         public bool Changed;
         public string PreviousBossKey;
+
+        /// <summary>/save export·import의 경로 인자 (공백 포함, 그대로). 없으면 "".</summary>
+        public string Path = "";
     }
 
     /// <summary>슬래시 명령 실행. 상태를 바꾸고 로그 이벤트(문구 키)를 돌려준다.</summary>
@@ -53,8 +74,17 @@ namespace LupinFarm.Core
         {
             "help", "status", "plant", "water", "harvest", "remove", "growing", "crops", "sell", "market", "shop", "buy", "unlock",
             "inv", "upgrade", "place", "auto", "expand", "field", "map", "records", "rank", "dex", "prestige", "perks",
-            "hide", "clear", "config", "reset", "exit",
+            "hide", "clear", "config", "save", "reset", "exit",
         };
+
+        /// <summary>명령 설명. 가격은 문구에 쓰지 않고 Content.cs에서 넣는다 (M5 밸런스로 값이 바뀌어도 맞게).</summary>
+        static Msg HelpText(string name)
+        {
+            if (name == "buy")
+                return M("help.buy", G(Content.EquipmentCost("sprinkler")), G(Content.EquipmentCost("harvester")), G(Content.EquipmentCost("planter")),
+                    G(Content.EquipmentCost("greenhouse")), G(Content.EquipmentCost("shipping-bin")), G(Content.EquipmentCost("auto-buyer")));
+            return M("help." + name);
+        }
 
         /// <summary>/help로 설명을 볼 수 있는 농기구·창고·장비 (M4 K24). 명령 이름과 겹치지 않는다.</summary>
         public static readonly string[] Items =
@@ -71,7 +101,8 @@ namespace LupinFarm.Core
         public static CommandResult Execute(CommandContext c, string line)
         {
             var r = new CommandResult();
-            string trimmed = (line ?? "").Trim();
+            // 한글 자판으로 친 명령도 같은 키의 영문으로 읽는다 (M5 K1)
+            string trimmed = HangulKeys.FixLine((line ?? "").Trim());
             if (trimmed.Length == 0) return r;
             if (trimmed[0] != '/') return Fail(r, M("t.unknown"), M("err.not_cmd"));
 
@@ -109,6 +140,7 @@ namespace LupinFarm.Core
                 case "hide": r.Action = UiAction.ToggleHide; return r;
                 case "clear": r.Action = UiAction.ClearLog; return r;
                 case "config": return Config(c, a);
+                case "save": return SaveCmd(trimmed, a);
                 case "reset": return Reset();
                 case "exit": r.Action = UiAction.Exit; return r;
             }
@@ -432,8 +464,9 @@ namespace LupinFarm.Core
                 string trend = diff > 0 ? "▲ " + NumberFormat.Num(diff) : diff < 0 ? "▼ " + NumberFormat.Num(-diff) : "-";
                 string vs = (pct > 0 ? "+" : "") + pct.ToString("0", Inv) + "%";
                 object note = Content.InSeason(crop, GameClock.Season(now)) ? (object)"" : M("market.off");
+                // 오른 값은 초록, 내린 값은 빨강 (M5 K5)
                 lines.Add(Joined.Row(new Pad(CropName(crop.Id), 13), new Pad(G(price), 8), new Pad(G(crop.BasePrice), 7),
-                    new Pad(vs, 10), new Pad(trend, 11), note));
+                    new Pad(Tone.BySign(pct, vs), 10), new Pad(Tone.BySign(diff, trend), 11), note));
             }
             if (locked > 0) lines.Add(M("market.locked", locked));
             return Info(r, M("t.market", M("season." + GameClock.Season(now)), GameClock.SeasonDay(now), GameClock.Time(now)), lines.ToArray());
@@ -755,11 +788,33 @@ namespace LupinFarm.Core
             });
         }
 
-        /// <summary>/place sprinkler &lt;칸&gt; (FR-EQP-01, M3 K3).</summary>
+        /// <summary>"2" 또는 "lv2" → 2. 스프링클러 레벨 범위 밖이면 false.</summary>
+        public static bool TryLevel(string s, out int level)
+        {
+            level = 0;
+            if (s == null) return false;
+            string t = s.ToLowerInvariant();
+            if (t.StartsWith("lv")) t = t.Substring(2);
+            return int.TryParse(t, NumberStyles.None, Inv, out level) && level >= 1 && level <= Content.MaxSprinklerLevel;
+        }
+
+        /// <summary>보관함에 든 레벨별 수: "Lv1 ×2 · Lv3 ×1".</summary>
+        static object BoxLevels(GameState s)
+        {
+            var items = new List<object>();
+            for (int lv = 1; lv <= Content.MaxSprinklerLevel; lv++)
+            {
+                int n = GameState.Count(s.EquipmentBox, GameState.BoxKey(lv));
+                if (n > 0) items.Add(M("box.level", lv, n));
+            }
+            return new Joined(items);
+        }
+
+        /// <summary>/place sprinkler &lt;칸&gt; [레벨] (FR-EQP-01, M3 K3, M5 K11).</summary>
         static CommandResult Place(CommandContext c, string[] a)
         {
             var r = new CommandResult();
-            if (a.Length < 3) return Usage(r, "place");
+            if (a.Length < 3 || a.Length > 4) return Usage(r, "place");
             var s = c.State;
             string what = a[1].ToLowerInvariant();
             if (what != "sprinkler")
@@ -770,7 +825,11 @@ namespace LupinFarm.Core
             Target t;
             if (!ParseTarget(c, a[2], false, "t.place", r, out t)) return r;
             var title = M("t.place", FieldLabel(t.Field));
+            int want = 0;
+            if (a.Length == 4 && !TryLevel(a[3], out want)) return Usage(r, "place");
             if (s.BoxSprinklers == 0) return Fail(r, title, M("err.no_sprinkler", G(Content.EquipmentCost("sprinkler"))));
+            if (want > 0 && GameState.Count(s.EquipmentBox, GameState.BoxKey(want)) == 0)
+                return Fail(r, title, M("err.no_sprinkler_lv", want, BoxLevels(s)));
             if (!t.SingleCell) return Fail(r, title, M("err.cell_only"));
             var f = s.Fields[t.Field];
             int i = t.Cells[0];
@@ -778,10 +837,53 @@ namespace LupinFarm.Core
             if (i >= f.Open) return Fail(r, title, M("err.all_locked"));
             var p = f.Plots[i];
             if (!Farming.IsEmpty(p)) return Fail(r, title, M("err.place_used", cell));
-            int lv = Farming.TakeSprinkler(s);
+            int lv = Farming.TakeSprinkler(s, want);
             p.Sprinkler = lv;
             int n = Farming.WaterAround(s, t.Field, i, lv);
             return Ok(r, title, M("place.done", lv, cell, n), M("place.daily", s.BoxSprinklers));
+        }
+
+        /// <summary>
+        /// 입력 중인 `/place sprinkler &lt;칸&gt; [레벨]`·`/upgrade sprinkler &lt;칸&gt;`을 실행하면 물을 받을 범위 (M5 K9).
+        /// 칸·레벨이 맞지 않으면(잠김, 작물, 보관함에 없음, 최대 레벨) null. 골드는 보지 않는다.
+        /// </summary>
+        public static SprinklerPreview PreviewSprinkler(CommandContext c, string line)
+        {
+            if (string.IsNullOrEmpty(line)) return null;
+            string[] a = HangulKeys.FixLine(line.Trim()).Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (a.Length < 3 || a[1].ToLowerInvariant() != "sprinkler") return null;
+            string cmd = a[0].ToLowerInvariant();
+            bool place = cmd == "/place";
+            if (!place && cmd != "/upgrade") return null;
+            if (a.Length > (place ? 4 : 3)) return null;
+            var s = c.State;
+            int view = c.ViewField >= 0 && c.ViewField < s.Fields.Count ? c.ViewField : 0;
+            Target t;
+            Msg e;
+            if (!RangeParser.TryParse(a[2], view, s.Fields.Count, false, out t, out e) || !t.SingleCell) return null;
+            var f = s.Fields[t.Field];
+            int i = t.Cells[0];
+            if (i >= f.Open) return null;
+            int lv;
+            if (place)
+            {
+                int want = 0;
+                if (a.Length == 4 && !TryLevel(a[3], out want)) return null;
+                if (!Farming.IsEmpty(f.Plots[i])) return null;
+                lv = want > 0 ? (GameState.Count(s.EquipmentBox, GameState.BoxKey(want)) > 0 ? want : 0) : Farming.BestBoxLevel(s);
+            }
+            else
+            {
+                int now = f.Plots[i].Sprinkler;
+                lv = now > 0 && Content.SprinklerUpgradeCost(now) >= 0 ? now + 1 : 0;
+            }
+            if (lv <= 0) return null;
+            var pv = new SprinklerPreview();
+            pv.Field = t.Field;
+            pv.Cell = i;
+            pv.Level = lv;
+            pv.Range = Farming.RangeIf(f, i, lv);
+            return pv;
         }
 
         // ------------------------------------------------------------------ auto (F9)
@@ -1251,7 +1353,7 @@ namespace LupinFarm.Core
                 switch (g.State)
                 {
                     case 0:
-                        when = M("grow.ready");
+                        when = Tone.Good(M("grow.ready"));
                         note = Rules.AutoHarvests(s, g.Field) ? (object)M("grow.note_auto") : M("grow.note_harvest", target.Length > 0 ? target : "ready");
                         break;
                     case 1:
@@ -1263,7 +1365,7 @@ namespace LupinFarm.Core
                         note = M("grow.note_short", new Dur(RealSeconds(c, g.WaterLeft)), target.Length > 0 ? target : "<range>");
                         break;
                     default:
-                        when = M("grow.stopped");
+                        when = Tone.Warn(M("grow.stopped"));
                         note = M("grow.note_dry", new Dur(RealSeconds(c, g.Left)), target.Length > 0 ? target : "<range>");
                         break;
                 }
@@ -1313,7 +1415,7 @@ namespace LupinFarm.Core
                 object bestCell = hasBest ? (object)M("rec.best", N(best), bestRun) : "-";
                 object mineCell = has ? (object)N(mine) : d >= day ? (object)M("rec.in_days", d - day + 1) : "-";
                 object diff = "";
-                if (has && hasBest) diff = mine > best ? "▲ " + N(mine - best) : mine < best ? "▼ " + N(best - mine) : "=";
+                if (has && hasBest) diff = mine > best ? Tone.Good("▲ " + N(mine - best)) : mine < best ? (object)Tone.Bad("▼ " + N(best - mine)) : "=";
                 lines.Add(Joined.Row(new Pad(d.ToString(Inv), 7), new Pad(bestCell, 16), new Pad(mineCell, 14), diff));
             }
             lines.Add(M("rec.peak", N(s.PeakNetWorth), s.PeakDay, N(Records.NetWorth(s))));
@@ -1514,7 +1616,7 @@ namespace LupinFarm.Core
             {
                 string name = a[1].TrimStart('/').ToLowerInvariant();
                 if (Array.IndexOf(Names, name) >= 0)
-                    return Info(r, M("t.help_cmd", "/" + name), M("usage." + name), M("help." + name), M("ex." + name));
+                    return Info(r, M("t.help_cmd", "/" + name), M("usage." + name), HelpText(name), M("ex." + name));
                 if (Array.IndexOf(Items, name) >= 0) return ItemHelp(c, name);
                 if (Array.IndexOf(Later, name) >= 0)
                     return Fail(r, M("t.help_cmd", "/" + name), M("err.not_yet", "/" + name));
@@ -1635,6 +1737,25 @@ namespace LupinFarm.Core
             }
             if (id == "caretaker") return M("item.now_caretaker", s.Farm.Caretaker, NumberFormat.Num(Engine.OfflineCapHours(s)));
             return s.Farm.Has(id) ? M("item.now_have") : M("item.now_none");
+        }
+
+        /// <summary>/save, /save export [경로], /save import &lt;경로&gt; (M5 K6, K7). 경로는 둘째 낱말 뒤 전부(공백 포함).</summary>
+        static CommandResult SaveCmd(string line, string[] a)
+        {
+            var r = new CommandResult();
+            if (a.Length == 1)
+            {
+                r.Action = UiAction.SaveInfo;
+                return r;
+            }
+            string sub = a[1].ToLowerInvariant();
+            if (sub != "export" && sub != "import") return Usage(r, "save");
+            int at = line.IndexOf(a[1], line.IndexOf(a[0], StringComparison.Ordinal) + a[0].Length, StringComparison.Ordinal);
+            string rest = at >= 0 ? line.Substring(at + a[1].Length).Trim() : "";
+            if (sub == "import" && rest.Length == 0) return Usage(r, "save");
+            r.Action = sub == "export" ? UiAction.SaveExport : UiAction.SaveImport;
+            r.Path = rest;
+            return r;
         }
 
         static CommandResult Config(CommandContext c, string[] a)

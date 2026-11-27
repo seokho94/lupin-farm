@@ -105,9 +105,9 @@ namespace LupinFarm.Core
             if (v > best)
             {
                 isBest = true;
-                return new Msg("checkpoint.best", NumberFormat.Num(v), NumberFormat.Num(best), bestRun, NumberFormat.Num(v - best));
+                return new Msg("checkpoint.best", NumberFormat.Num(v), NumberFormat.Num(best), bestRun, Tone.Good(new Msg("checkpoint.up", NumberFormat.Num(v - best))));
             }
-            return new Msg("checkpoint.behind", NumberFormat.Num(v), NumberFormat.Num(best), bestRun, NumberFormat.Num(best - v));
+            return new Msg("checkpoint.behind", NumberFormat.Num(v), NumberFormat.Num(best), bestRun, Tone.Bad(new Msg("checkpoint.down", NumberFormat.Num(best - v))));
         }
 
         /// <summary>진행에서 지나간 체크포인트를 노란 이벤트로 (K3). NEW BEST면 업적 new-best.</summary>

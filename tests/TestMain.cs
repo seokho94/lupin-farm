@@ -27,8 +27,16 @@ namespace LupinFarm.Tests
     /// <summary>public static void Test*() 메서드를 모두 실행한다. 실패가 있으면 종료 코드 1.</summary>
     public static class TestMain
     {
-        public static int Main()
+        public static int Main(string[] args)
         {
+            // bin\tests.exe balance [일수]: 밸런스 시뮬레이션 보고 (M5 K12)
+            if (args.Length > 0 && args[0] == "balance")
+            {
+                int days = args.Length > 1 ? int.Parse(args[1]) : 250;
+                Console.Write(BalanceSim.Report(days));
+                if (args.Length > 2) Console.Write(BalanceSim.Trace(int.Parse(args[2]), days));
+                return 0;
+            }
             int pass = 0, fail = 0;
             foreach (var type in typeof(TestMain).Assembly.GetTypes())
             {

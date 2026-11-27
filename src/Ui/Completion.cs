@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using LupinFarm.Core;
 using LupinFarm.Data;
 
@@ -30,6 +31,12 @@ namespace LupinFarm.Ui
 
         public static List<Candidate> Compute(string text, int caret, GameState s, Profile p, int viewField, out int tokenStart)
         {
+            return Compute(text, caret, s, p, viewField, null, out tokenStart);
+        }
+
+        /// <summary>exports: /save import 후보로 쓸 내보낸 파일 (최근 순). null이면 없음 (M5 K7).</summary>
+        public static List<Candidate> Compute(string text, int caret, GameState s, Profile p, int viewField, Func<List<FileInfo>> exports, out int tokenStart)
+        {
             var list = new List<Candidate>();
             tokenStart = 0;
             if (string.IsNullOrEmpty(text) || text[0] != '/' || caret != text.Length) return list;
@@ -49,6 +56,11 @@ namespace LupinFarm.Ui
             else
             {
                 Args(parts[0].Substring(1).ToLowerInvariant(), index, parts, s, p, lang, viewField, opts);
+                if (index == 2 && parts[0].ToLowerInvariant() == "/save" && parts[1].ToLowerInvariant() == "import" && exports != null)
+                {
+                    foreach (var f in exports())
+                        opts.Add(new Candidate(f.Name, L(lang, "cand.export_file", f.LastWriteTime.ToString("yyyy-MM-dd HH:mm", Inv))));
+                }
             }
 
             foreach (var o in opts)
@@ -81,9 +93,25 @@ namespace LupinFarm.Ui
                     break;
                 case "place":
                     if (index == 1) o.Add(new Candidate("sprinkler", L(lang, "cand.box", s.BoxSprinklers)));
+                    else if (index == 3 && parts[1].ToLowerInvariant() == "sprinkler")
+                    {
+                        // 칸 다음: 보관함에 있는 레벨 (M5 K11)
+                        for (int lv = Content.MaxSprinklerLevel; lv >= 1; lv--)
+                        {
+                            int n = GameState.Count(s.EquipmentBox, GameState.BoxKey(lv));
+                            if (n > 0) o.Add(new Candidate(lv.ToString(Inv), L(lang, "cand.box_level", lv, n)));
+                        }
+                    }
                     break;
                 case "records":
                     if (index == 1) o.Add(new Candidate("daily", L(lang, "cand.daily")));
+                    break;
+                case "save":
+                    if (index == 1)
+                    {
+                        o.Add(new Candidate("export", L(lang, "cand.save_export")));
+                        o.Add(new Candidate("import", L(lang, "cand.save_import")));
+                    }
                     break;
                 case "perks":
                     if (index == 1) o.Add(new Candidate("buy", L(lang, "cand.perks_buy")));
@@ -167,7 +195,7 @@ namespace LupinFarm.Ui
                         o.Add(new Candidate("storage", sc < 0
                             ? Localizer.S(lang, "cand.storage_max", s.StorageCapacity)
                             : Localizer.S(lang, "cand.storage", s.StorageCapacity, Content.StorageCapacity(s.StorageLevel + 1), NumberFormat.Gold(sc))));
-                        o.Add(new Candidate("sprinkler", L(lang, "cand.sprinkler_up")));
+                        o.Add(new Candidate("sprinkler", L(lang, "cand.sprinkler_up", Gold(Content.SprinklerUpgradeCost(1)), Gold(Content.SprinklerUpgradeCost(2)))));
                         Leveled(lang, "controller", s.Farm.Controller, Content.ControllerCost(s.Farm.Controller), o);
                         Leveled(lang, "caretaker", s.Farm.Caretaker, Content.CaretakerCost(s.Farm.Caretaker), o);
                     }

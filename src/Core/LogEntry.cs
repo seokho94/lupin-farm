@@ -63,6 +63,53 @@ namespace LupinFarm.Core
         }
     }
 
+    public enum ToneKind
+    {
+        Good,
+        Bad,
+        Warn,
+        Dim,
+    }
+
+    /// <summary>
+    /// 값에 붙이는 색의 뜻 (M5 K5). 화면이 그 부분만 초록(좋음)·빨강(나쁨)·주황(주의)·회색(흐림)으로 그린다.
+    /// 문구 표는 그대로고, 로그 밖(시작 상자, 선택지)에서는 색 없이 글자만 남는다.
+    /// </summary>
+    public sealed class Tone
+    {
+        public readonly object Inner;
+        public readonly ToneKind Kind;
+
+        public Tone(object inner, ToneKind kind)
+        {
+            Inner = inner;
+            Kind = kind;
+        }
+
+        public static Tone Good(object inner)
+        {
+            return new Tone(inner, ToneKind.Good);
+        }
+
+        public static Tone Bad(object inner)
+        {
+            return new Tone(inner, ToneKind.Bad);
+        }
+
+        public static Tone Warn(object inner)
+        {
+            return new Tone(inner, ToneKind.Warn);
+        }
+
+        /// <summary>양수면 좋음, 음수면 나쁨, 0이면 색 없음.</summary>
+        public static object BySign(double sign, object inner)
+        {
+            if (sign > 0) return Good(inner);
+            if (sign < 0) return Bad(inner);
+            return inner;
+        }
+    }
+
     public enum LogKind
     {
         Input,

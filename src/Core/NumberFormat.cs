@@ -39,11 +39,14 @@ namespace LupinFarm.Core
             return x.ToString("0.00", Inv);
         }
 
-        /// <summary>골드. 10,000 미만은 "1,240G", 줄여 쓰면 "200K G" (단위와 붙어 kg처럼 읽히지 않게).</summary>
+        /// <summary>
+        /// 골드. 10,000 미만은 "1,240G", 줄여 쓰면 "200K G" (단위와 붙어 kg처럼 읽히지 않게). 사이는 줄바꿈하지 않는
+        /// 공백(U+00A0)이라 로그 낱말 줄바꿈(M5 K4)에서 "200K"와 "G"가 갈라지지 않는다.
+        /// </summary>
         public static string Gold(double v)
         {
             string n = Num(v);
-            return Math.Abs(v) < 10000 ? n + "G" : n + " G";
+            return Math.Abs(v) < 10000 ? n + "G" : n + "\u00A0G";
         }
 
         public static string Int(long v)

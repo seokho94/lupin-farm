@@ -225,6 +225,24 @@ namespace LupinFarm.Core
             return cov;
         }
 
+        /// <summary>칸 cell에 레벨 level을 두면 물을 받을 열린 칸(스프링클러 칸 제외)과 자기 칸 (M5 K9 미리 보기).</summary>
+        public static bool[] RangeIf(FieldState f, int cell, int level)
+        {
+            var range = new bool[Content.PlotsPerField];
+            range[cell] = true;
+            foreach (int k in Reach(cell, level))
+                if (k < f.Open && f.Plots[k].Sprinkler <= 0) range[k] = true;
+            return range;
+        }
+
+        /// <summary>보관함에서 가장 높은 레벨. 비었으면 0.</summary>
+        public static int BestBoxLevel(GameState s)
+        {
+            for (int lv = Content.MaxSprinklerLevel; lv >= 1; lv--)
+                if (GameState.Count(s.EquipmentBox, GameState.BoxKey(lv)) > 0) return lv;
+            return 0;
+        }
+
         /// <summary>매일 06:00: 모든 스프링클러가 물을 준다.</summary>
         public static void SprinklerDay(GameState s)
         {
@@ -239,8 +257,15 @@ namespace LupinFarm.Core
         /// <summary>보관함에서 가장 높은 레벨의 스프링클러를 꺼낸다. 없으면 0.</summary>
         public static int TakeSprinkler(GameState s)
         {
+            return TakeSprinkler(s, 0);
+        }
+
+        /// <summary>보관함에서 스프링클러를 꺼낸다. level이 0이면 가장 높은 레벨 (M5 K11). 없으면 0.</summary>
+        public static int TakeSprinkler(GameState s, int level)
+        {
             for (int lv = Content.MaxSprinklerLevel; lv >= 1; lv--)
             {
+                if (level > 0 && lv != level) continue;
                 string k = GameState.BoxKey(lv);
                 if (GameState.Count(s.EquipmentBox, k) > 0)
                 {

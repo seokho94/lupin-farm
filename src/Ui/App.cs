@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using LupinFarm.Core;
 using LupinFarm.Data;
@@ -42,6 +43,9 @@ namespace LupinFarm.Ui
         string candKey;
         PromptRequest prompt;
         int promptSel;
+
+        /// <summary>지금 입력에 한글 자판 글자를 영문 키로 바꿔 넣은 적이 있는지 (안내 줄, M5 K2).</summary>
+        bool imeFixed;
         RuleRun lastRun;
         long lastRunAt = -1;
 
@@ -264,15 +268,7 @@ namespace LupinFarm.Ui
 
             if (el > Content.SleepGapSeconds)
             {
-                double cap = Engine.OfflineCapHours(state);
-                double applied;
-                long gm = Engine.OfflineGameMinutes(el, cap, Timescale, out applied);
-                gameAcc = 0;
-                var rep = Engine.Advance(state, gm);
-                var events = new List<LogEntry>();
-                var extra = Records.CheckpointSummary(state, profile, rep, Today(), events);
-                AddLog(LogEntry.Make(LogKind.Event, new Msg("t.offline", new Dur(el)), Engine.OfflineLines(state, el, applied, cap, rep, extra).ToArray()));
-                foreach (var l in events) AddLog(l);
+                foreach (var l in CatchUp(el)) AddLog(l);
                 Observe();
                 SaveAll();
                 return;
@@ -288,6 +284,25 @@ namespace LupinFarm.Ui
             CheckpointLogs(r);
             Observe();
             dirty = true;
+        }
+
+        /// <summary>
+        /// 실제 el초 동안 멈춰 있던 판을 상한까지 진행하고 부재 중 요약 로그를 돌려준다
+        /// (PC 절전에서 깨어남, 가져온 세이브 M5 K7).
+        /// </summary>
+        List<LogEntry> CatchUp(double el)
+        {
+            var logs = new List<LogEntry>();
+            double cap = Engine.OfflineCapHours(state);
+            double applied;
+            long gm = Engine.OfflineGameMinutes(el, cap, Timescale, out applied);
+            gameAcc = 0;
+            var rep = Engine.Advance(state, gm);
+            var events = new List<LogEntry>();
+            var extra = Records.CheckpointSummary(state, profile, rep, Today(), events);
+            logs.Add(LogEntry.Make(LogKind.Event, new Msg("t.offline", new Dur(el)), Engine.OfflineLines(state, el, applied, cap, rep, extra).ToArray()));
+            logs.AddRange(events);
+            return logs;
         }
 
         void SaveAll()
@@ -469,11 +484,21 @@ namespace LupinFarm.Ui
                     if (ch >= ' ' && ch != (char)127 && !(e.Ctrl && !e.Alt))
                     {
                         if (ch == '?' && input.Text.Length == 0) AddLog(Commands.Shortcuts(profile));
-                        else input.Insert(ch.ToString());
+                        else input.Insert(TypedKeys(ch));
                     }
                     break;
             }
             UpdateCands();
+        }
+
+        /// <summary>
+        /// 한/영이 한글일 때 들어온 글자를 두벌식 자리의 영문 키로 바꾼다. `/save export|import` 뒤의 경로는 그대로 (M5 K1).
+        /// </summary>
+        string TypedKeys(char ch)
+        {
+            if (!HangulKeys.IsHangul(ch) || HangulKeys.KeepsRawPath(input.Text.Substring(0, input.Caret))) return ch.ToString();
+            imeFixed = true;
+            return HangulKeys.Keys(ch);
         }
 
         int PageRows()
@@ -512,20 +537,24 @@ namespace LupinFarm.Ui
                     return;
                 }
             }
-            if (hits.Grid.Contains(x, y))
-            {
-                int col = (x - hits.Grid.X) / Sprites.Size;
-                int row = (y - hits.Grid.Y) / (Sprites.Size / 2);
-                int idx = row * Content.Cols + col;
-                if (idx >= 0 && idx < Content.PlotsPerField)
-                {
-                    int c = input.Caret;
-                    if (c > 0 && input.Text[c - 1] != ' ') input.Insert(" ");
-                    input.Insert(RangeParser.CellName(idx));
-                    UpdateCands();
-                    dirty = true;
-                }
-            }
+            if (hits.Grid.Contains(x, y)) ClickPlot(hits.Grid, hits.GridField, x, y);
+            else if (hits.Grid2.Contains(x, y)) ClickPlot(hits.Grid2, hits.Grid2Field, x, y);
+        }
+
+        /// <summary>칸을 누르면 칸 이름을 넣는다. 보는 구역이 아니면(넓은 창의 다른 구역) `f2.B3`처럼 (M5 K3).</summary>
+        void ClickPlot(Rect grid, int field, int x, int y)
+        {
+            int col = (x - grid.X) / Sprites.Size;
+            int row = (y - grid.Y) / (Sprites.Size / 2);
+            int idx = row * Content.Cols + col;
+            if (idx < 0 || idx >= Content.PlotsPerField) return;
+            int c = input.Caret;
+            if (c > 0 && input.Text[c - 1] != ' ') input.Insert(" ");
+            string name = RangeParser.CellName(idx);
+            if (field >= 0 && field != viewField) name = "f" + (field + 1).ToString(Inv) + "." + name;
+            input.Insert(name);
+            UpdateCands();
+            dirty = true;
         }
 
         void ChangeField(int i)
@@ -616,6 +645,15 @@ namespace LupinFarm.Ui
                 case UiAction.Prestige:
                     DoPrestige();
                     break;
+                case UiAction.SaveInfo:
+                    SaveInfo();
+                    break;
+                case UiAction.SaveExport:
+                    SaveExport(res.Path);
+                    break;
+                case UiAction.SaveImport:
+                    AskImport(res.Path);
+                    break;
             }
             if (res.Action != UiAction.Reset && res.Action != UiAction.Prestige) Observe();
             dirty = true;
@@ -646,12 +684,19 @@ namespace LupinFarm.Ui
 
         void UpdateCands()
         {
+            if (input.Text.Length == 0) imeFixed = false;
             string key = input.Text + "\u0001" + input.Caret.ToString(Inv);
             if (key == candKey) return;
             candKey = key;
             candDismissed = false;
-            cands = Completion.Compute(input.Text, input.Caret, state, profile, viewField, out candStart);
+            cands = Completion.Compute(input.Text, input.Caret, state, profile, viewField, ExportFiles, out candStart);
             candSel = 0;
+        }
+
+        /// <summary>/save import 자동완성용 내보낸 파일 (최근 순, M5 K7).</summary>
+        List<FileInfo> ExportFiles()
+        {
+            return store != null ? store.ListExports() : new List<FileInfo>();
         }
 
         void Fill()
@@ -660,6 +705,151 @@ namespace LupinFarm.Ui
             var c = cands[candSel];
             input.SetText(input.Text.Substring(0, candStart) + c.Text + " ");
             UpdateCands();
+        }
+
+        // ================================================================== 내보내기·가져오기 (M5 K6~K8)
+
+        /// <summary>--frame에서 보여 줄 저장 폴더 (실제 폴더는 건드리지 않는다).</summary>
+        const string PreviewDir = "C:\\Users\\me\\AppData\\Local\\LupinFarm";
+
+        static Msg M(string key, params object[] args)
+        {
+            return new Msg(key, args);
+        }
+
+        static string Local(DateTime utc)
+        {
+            return utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", Inv);
+        }
+
+        void SaveInfo()
+        {
+            string dir = store != null ? store.Dir : PreviewDir;
+            var lines = new List<object>();
+            lines.Add(M("save.folder", dir));
+            lines.Add(M("save.saved", lastSaveUtc > DateTime.MinValue ? lastSaveUtc.ToLocalTime().ToString("HH:mm:ss", Inv) : "-"));
+            var files = store != null ? store.ListExports() : new List<FileInfo>();
+            if (files.Count > 0) lines.Add(M("save.exports", files.Count, files[0].Name, Local(files[0].LastWriteTimeUtc)));
+            else lines.Add(M("save.exports_none"));
+            lines.Add(M("save.how"));
+            AddLog(LogEntry.Make(LogKind.Info, M("t.save"), lines.ToArray()));
+        }
+
+        /// <summary>판·기록 요약: "run #3 · Day 31 · net worth 330K · 3 run records".</summary>
+        static Msg Summary(GameState s, Profile p)
+        {
+            s.Perks = new Dictionary<string, int>(p.Perks);
+            return M("save.summary", s.Run, GameClock.Day(s.GameMinute), NumberFormat.Num(Records.NetWorth(s)), p.Runs.Count);
+        }
+
+        void SaveExport(string arg)
+        {
+            var title = M("t.save_export");
+            if (store == null)
+            {
+                AddLog(LogEntry.Make(LogKind.Error, title, M("save.err.preview")));
+                return;
+            }
+            SaveAll();
+            string path = arg;
+            try
+            {
+                path = store.ExportPath(arg, DateTime.Now);
+                bool replaced = store.Export(path, state, profile, DateTime.UtcNow);
+                AddLog(LogEntry.Make(LogKind.Ok, title, M(replaced ? "save.exported_over" : "save.exported", path), Summary(state, profile), M("save.exported_hint")));
+            }
+            catch (Exception ex)
+            {
+                AddLog(LogEntry.Make(LogKind.Error, title, M("save.err.write", path, ex.Message)));
+            }
+        }
+
+        void AskImport(string arg)
+        {
+            var title = M("t.save_import");
+            if (store == null)
+            {
+                AddLog(LogEntry.Make(LogKind.Error, title, M("save.err.preview")));
+                return;
+            }
+            string path = store.ImportPath(arg);
+            ExportError err;
+            var f = SaveStore.ReadExport(path, out err);
+            if (err != ExportError.None)
+            {
+                Msg why;
+                switch (err)
+                {
+                    case ExportError.Missing: why = M("save.err.missing", path); break;
+                    case ExportError.Format: why = M("save.err.format", path); break;
+                    case ExportError.Version: why = M("save.err.version", f.Version, ExportFile.CurrentVersion); break;
+                    default: why = M("save.err.broken", path); break;
+                }
+                AddLog(LogEntry.Make(LogKind.Error, title, why));
+                return;
+            }
+            DateTime at;
+            string when = TryUtc(f.ExportedAt, out at) ? Local(at) : "-";
+            var pr = new PromptRequest();
+            pr.Question = M("import.q", Path.GetFileName(path));
+            pr.Details.Add(M("import.from", Summary(f.Save, f.Profile), when));
+            pr.Details.Add(M("import.now", Summary(state, profile)));
+            pr.Details.Add(M("import.note"));
+            pr.Options.Add(M("opt.import"));
+            pr.Options.Add(M("opt.no"));
+            pr.Default = 1;
+            pr.OnSelect = delegate(int i)
+            {
+                if (i == 0) return DoImport(path, f);
+                var res = new CommandResult();
+                res.Logs.Add(LogEntry.Make(LogKind.Info, M("t.cancelled")));
+                return res;
+            };
+            prompt = pr;
+            promptSel = pr.Default;
+        }
+
+        /// <summary>
+        /// 지금 데이터를 export\before-import-….json으로 남긴 뒤 가져온 판·프로필로 바꾼다. 내보낸 뒤 지난 시간은
+        /// 꺼져 있던 시간으로 반영한다(상한 적용). 보스키가 다르면 다시 등록한다 (M5 K7).
+        /// </summary>
+        CommandResult DoImport(string path, ExportFile f)
+        {
+            var res = new CommandResult();
+            var title = M("t.save_import");
+            SaveAll();
+            string backup = store.ExportPath(SaveStore.StampName("before-import", DateTime.Now), DateTime.Now);
+            try
+            {
+                store.Export(backup, state, profile, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                res.Logs.Add(LogEntry.Make(LogKind.Error, title, M("save.err.write", backup, ex.Message), M("import.kept")));
+                return res;
+            }
+            string oldKey = profile.Settings.BossKey;
+            state = f.Save;
+            profile = f.Profile;
+            state.Perks = new Dictionary<string, int>(profile.Perks);
+            viewField = 0;
+            prompt = null;
+            bloomLogs = null;
+            lastRun = null;
+            lastRunAt = -1;
+            gameAcc = 0;
+            input.SetHistory(profile.History);
+            if (profile.Settings.BossKey != oldKey) BindBossKey(oldKey);
+            res.Logs.Add(LogEntry.Make(LogKind.Ok, title, M("import.done", Path.GetFileName(path)), Summary(state, profile),
+                M("import.backup", Path.Combine("export", Path.GetFileName(backup)))));
+            DateTime saved;
+            if (TryUtc(state.SavedAtUtc, out saved))
+            {
+                double el = (DateTime.UtcNow - saved).TotalSeconds;
+                if (el >= 60) res.Logs.AddRange(CatchUp(el));
+            }
+            lastTickUtc = DateTime.UtcNow;
+            return res;
         }
 
         // ================================================================== 로그
@@ -699,17 +889,25 @@ namespace LupinFarm.Ui
             {
                 var t = new Para();
                 t.Indent = 2;
-                t.Add("● ", KindColor(e.Kind)).Add(R(e.Title), Colors.Default);
+                t.Add("● ", KindColor(e.Kind));
+                AddMarked(t, e.Title);
                 paras.Add(t);
                 for (int i = 0; i < e.Lines.Count; i++)
                 {
                     var q = new Para();
                     q.Indent = 5;
-                    q.Add(i == 0 ? "  ⎿  " : "     ", Colors.Gray).Add(R(e.Lines[i]), Colors.Default);
+                    q.Add(i == 0 ? "  ⎿  " : "     ", Colors.Gray);
+                    AddMarked(q, e.Lines[i]);
                     paras.Add(q);
                 }
             }
             return paras;
+        }
+
+        /// <summary>값에 붙은 색(Tone)대로 조각을 나눠 붙인다 (M5 K5).</summary>
+        void AddMarked(Para p, object o)
+        {
+            foreach (var sg in Localizer.Segments(Localizer.ResolveMarked(Lang, o), Colors.Default)) p.Segs.Add(sg);
         }
 
         static int KindColor(LogKind k)
@@ -817,7 +1015,7 @@ namespace LupinFarm.Ui
             if (!folded)
             {
                 RenderHeader(b, W);
-                FarmView.Render(b, 1, state, viewField, Lang, hits, Timescale, BloomFrame(nowUtc));
+                FarmView.Render(b, 1, state, viewField, Lang, hits, Timescale, BloomFrame(nowUtc), SprinklerPreviewNow());
                 y = 1 + FarmView.Height;
             }
 
@@ -855,6 +1053,17 @@ namespace LupinFarm.Ui
             DrawInput(b, inputTop, W);
             if (showCands) DrawCands(b, inputTop + 3, W, candRows);
             else DrawHint(b, H - 1, W, nowUtc);
+        }
+
+        /// <summary>입력 중인 스프링클러 설치·업그레이드 명령의 범위 미리 보기 (M5 K9). 선택지가 떠 있으면 없음.</summary>
+        SprinklerPreview SprinklerPreviewNow()
+        {
+            if (prompt != null || input.Text.Length == 0) return null;
+            var ctx = new CommandContext();
+            ctx.State = state;
+            ctx.Profile = profile;
+            ctx.ViewField = viewField;
+            return Commands.PreviewSprinkler(ctx, input.Text);
         }
 
         void RenderHeader(ScreenBuffer b, int W)
@@ -899,6 +1108,12 @@ namespace LupinFarm.Ui
             b.Put(0, y + 2, "╰", g);
             b.Fill(1, y + 2, W - 2, "─", g);
             b.Put(W - 1, y + 2, "╯", g);
+            if (imeFixed && input.Text.Length > 0)
+            {
+                // 자동완성 목록이 안내 줄을 덮어도 보이게 입력창 위 테두리에 쓴다 (M5 K2)
+                string note = " " + S("ui.hint.ime") + " ";
+                b.Put(W - 2 - TextWidth.Of(note), y, note, Colors.Accent);
+            }
 
             b.Put(2, y + 1, ">", disabled ? Colors.Dim : Colors.Default);
             int tx = 4;
@@ -1039,6 +1254,12 @@ namespace LupinFarm.Ui
 
         // ================================================================== 개발용 (--frame)
 
+        /// <summary>--frame 화면 폭: wide는 구역 2개가 나란히 보이는 폭 (M5 K3).</summary>
+        public static int PreviewWidth(string mode)
+        {
+            return mode == "wide" ? Content.WideWidth + 6 : Content.MinWidth;
+        }
+
         /// <summary>예시 상태로 화면 한 장을 만든다. mode: "" | "cands" | "prompt" | "folded" | "first".</summary>
         public static App Preview(string lang, string mode)
         {
@@ -1114,6 +1335,24 @@ namespace LupinFarm.Ui
                 app.input.SetText("");
             }
             else if (mode == "cands") app.input.SetText("/up");
+            else if (mode == "save") app.Execute("/save");
+            else if (mode == "preview") app.input.SetText("/upgrade sprinkler A10");
+            else if (mode == "placelv")
+            {
+                s.EquipmentBox[GameState.BoxKey(3)] = 1;
+                app.input.SetText("/place sprinkler B10 ");
+            }
+            else if (mode == "ime")
+            {
+                // 한/영이 한글일 때 "/plant t"를 친 모양 (M5 K1)
+                foreach (char ch in "/ㅔㅣ뭇 ㅅ") app.input.Insert(app.TypedKeys(ch));
+            }
+            else if (mode == "wide")
+            {
+                var f2 = s.Fields[1];
+                for (int i = 0; i < 4; i++) Set(f2.Plots[i], "turnip", 2880, s.GameMinute + 600);
+                app.input.SetText("/water f2.A");
+            }
             else if (mode == "gear") app.Execute("/help harvester");
             else if (mode == "gearcands") app.input.SetText("/help s");
             else if (mode == "seeds") app.input.SetText("/buy seed ");

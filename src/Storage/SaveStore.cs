@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -7,6 +8,31 @@ using LupinFarm.Core;
 
 namespace LupinFarm.Storage
 {
+    /// <summary>내보내기 파일 하나: 현재 판 + 프로필 (M5 K8).</summary>
+    public sealed class ExportFile
+    {
+        public const string FormatName = "lupin-farm-export";
+        public const int CurrentVersion = 1;
+
+        public string Format { get; set; }
+        public int Version { get; set; }
+
+        /// <summary>내보낸 시각 (UTC, 왕복 형식).</summary>
+        public string ExportedAt { get; set; }
+        public GameState Save { get; set; }
+        public Profile Profile { get; set; }
+    }
+
+    /// <summary>내보내기 파일을 읽지 못한 이유.</summary>
+    public enum ExportError
+    {
+        None,
+        Missing,
+        Broken,
+        Format,
+        Version,
+    }
+
     /// <summary>
     /// save.json(현재 판)와 profile.json(판을 넘어 남는 것) 읽기·쓰기.
     /// 임시 파일에 쓴 뒤 바꿔치기하고 직전 버전을 .bak으로 남긴다 (FR-SET-07).
@@ -100,6 +126,124 @@ namespace LupinFarm.Storage
         public string ErrorLogPath
         {
             get { return errorPath; }
+        }
+
+        // ------------------------------------------------------------------ 내보내기·가져오기 (M5 K6~K8)
+
+        /// <summary>내보낸 파일의 기본 폴더: 저장 폴더의 export.</summary>
+        public string ExportDir
+        {
+            get { return Path.Combine(Dir, "export"); }
+        }
+
+        /// <summary>"lupin-20261127-161002.json" 같은 이름.</summary>
+        public static string StampName(string prefix, DateTime local)
+        {
+            return prefix + "-" + local.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".json";
+        }
+
+        static string Unquote(string arg)
+        {
+            string a = (arg ?? "").Trim();
+            if (a.Length >= 2 && a[0] == '"' && a[a.Length - 1] == '"') a = a.Substring(1, a.Length - 2).Trim();
+            return a;
+        }
+
+        /// <summary>
+        /// 내보낼 경로. 비었으면 export 폴더에 기본 이름, 폴더면 그 안에 기본 이름, 확장자가 없으면 .json.
+        /// 상대 경로는 export 폴더 기준이다 (현재 폴더에 쓰지 않는다, K6).
+        /// </summary>
+        public string ExportPath(string arg, DateTime local)
+        {
+            string a = Unquote(arg);
+            string name = StampName("lupin", local);
+            if (a.Length == 0) return Path.Combine(ExportDir, name);
+            string full = Path.IsPathRooted(a) ? a : Path.Combine(ExportDir, a);
+            if (Directory.Exists(full) || a.EndsWith("\\") || a.EndsWith("/")) return Path.Combine(full, name);
+            if (Path.GetExtension(full).Length == 0) full += ".json";
+            return Path.GetFullPath(full);
+        }
+
+        /// <summary>가져올 경로. 상대 경로는 export 폴더 기준, 확장자가 없으면 .json도 찾아본다.</summary>
+        public string ImportPath(string arg)
+        {
+            string a = Unquote(arg);
+            string full = Path.IsPathRooted(a) ? a : Path.Combine(ExportDir, a);
+            if (!File.Exists(full) && Path.GetExtension(full).Length == 0 && File.Exists(full + ".json")) full += ".json";
+            return Path.GetFullPath(full);
+        }
+
+        /// <summary>판과 프로필을 파일 하나로 쓴다. 이미 있던 파일을 바꿨으면 true.</summary>
+        public bool Export(string path, GameState s, Profile p, DateTime utcNow)
+        {
+            var f = new ExportFile();
+            f.Format = ExportFile.FormatName;
+            f.Version = ExportFile.CurrentVersion;
+            f.ExportedAt = utcNow.ToString("o", CultureInfo.InvariantCulture);
+            f.Save = s;
+            f.Profile = p;
+            bool existed = File.Exists(path);
+            Write(path, f);
+            return existed;
+        }
+
+        /// <summary>내보낸 파일을 읽는다. 형식·버전을 확인하고 판·프로필을 Normalize한다. 실패하면 null과 이유.</summary>
+        public static ExportFile ReadExport(string path, out ExportError error)
+        {
+            error = ExportError.None;
+            if (!File.Exists(path))
+            {
+                error = ExportError.Missing;
+                return null;
+            }
+            ExportFile f;
+            try
+            {
+                var js = new JavaScriptSerializer();
+                js.MaxJsonLength = int.MaxValue;
+                f = js.Deserialize<ExportFile>(File.ReadAllText(path, Utf8));
+            }
+            catch (Exception)
+            {
+                error = ExportError.Broken;
+                return null;
+            }
+            if (f == null || f.Format != ExportFile.FormatName)
+            {
+                error = ExportError.Format;
+                return null;
+            }
+            if (f.Version > ExportFile.CurrentVersion)
+            {
+                error = ExportError.Version;
+                return f;
+            }
+            if (f.Save == null || f.Profile == null)
+            {
+                error = ExportError.Broken;
+                return null;
+            }
+            f.Save.Normalize();
+            f.Profile.Normalize();
+            return f;
+        }
+
+        /// <summary>export 폴더의 .json 파일, 최근 것부터.</summary>
+        public List<FileInfo> ListExports()
+        {
+            var list = new List<FileInfo>();
+            try
+            {
+                var d = new DirectoryInfo(ExportDir);
+                if (!d.Exists) return list;
+                list.AddRange(d.GetFiles("*.json"));
+            }
+            catch (Exception)
+            {
+                return list;
+            }
+            list.Sort(delegate(FileInfo x, FileInfo y) { return y.LastWriteTimeUtc.CompareTo(x.LastWriteTimeUtc); });
+            return list;
         }
 
         static T Read<T>(string path) where T : class

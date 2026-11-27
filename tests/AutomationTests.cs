@@ -65,7 +65,7 @@ namespace LupinFarm.Tests
             Auto.Setup();
             Game.Ok("/buy sprinkler 3");
             Assert.Equal(3, Auto.S.BoxSprinklers, "three in the box");
-            Assert.Equal(1500.0, Auto.S.Invested, "counts as invested");
+            Assert.Equal(3 * Content.EquipmentCost("sprinkler"), Auto.S.Invested, "counts as invested");
             Game.Ok("/place sprinkler B2");
             Assert.Equal(2, Auto.S.BoxSprinklers, "took one");
             foreach (var c in new[] { "A2", "C2", "B1", "B3" }) Assert.True(Auto.Wet(c), "Lv1 waters " + c);
@@ -361,7 +361,10 @@ namespace LupinFarm.Tests
             foreach (var eq in new[] { "harvester", "planter", "shipping-bin", "auto-buyer", "controller" }) Game.Ok("/buy " + eq);
             Game.Ok("/upgrade controller");
             Game.Ok("/upgrade controller");
-            Assert.Equal(88500.0, Auto.S.Invested, "gear counts as invested");
+            double gear = 2 * (Content.EquipmentCost("sprinkler") + Content.SprinklerUpgradeCost(1) + Content.SprinklerUpgradeCost(2));
+            foreach (var eq in new[] { "harvester", "planter", "shipping-bin", "auto-buyer" }) gear += Content.EquipmentCost(eq);
+            gear += Content.ControllerCost(0) + Content.ControllerCost(1) + Content.ControllerCost(2);
+            Assert.Equal(gear, Auto.S.Invested, "gear counts as invested");
             Auto.Rule("when f1 ready do harvest");
             Auto.Rule("when f1 empty do plant turnip");
             Auto.Rule("when stock all >= 1 do sell all");

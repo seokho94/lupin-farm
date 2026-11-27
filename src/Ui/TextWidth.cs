@@ -32,6 +32,7 @@ namespace LupinFarm.Ui
                     i++;
                     continue;
                 }
+                if (Localizer.IsMark(c)) continue; // 색 표시는 폭 0 (M5 K5)
                 w += IsWide(c) ? 2 : 1;
             }
             return w;

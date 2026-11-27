@@ -46,7 +46,7 @@ namespace LupinFarm.Tests
             Assert.Equal("1.00M", NumberFormat.Num(999999), "rounds up to M");
             Assert.Equal("1.2e36", NumberFormat.Num(1.2e36), "exponent past Dc");
             Assert.Equal("1,240G", NumberFormat.Gold(1240), "gold");
-            Assert.Equal("200K G", NumberFormat.Gold(200000), "abbreviated gold is spaced");
+            Assert.Equal("200K\u00A0G", NumberFormat.Gold(200000), "abbreviated gold is spaced (no-break space)");
         }
     }
 

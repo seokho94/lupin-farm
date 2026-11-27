@@ -15,7 +15,7 @@ namespace LupinFarm.Ui
             string mode = args.Length > 2 ? args[2] : "";
             var app = App.Preview(lang, mode);
             var b = new ScreenBuffer();
-            b.Resize(Content.MinWidth, Content.MinHeight);
+            b.Resize(App.PreviewWidth(mode), Content.MinHeight);
             app.Render(b, DateTime.UtcNow);
             WriteUtf8(b.PlainText());
             return 0;

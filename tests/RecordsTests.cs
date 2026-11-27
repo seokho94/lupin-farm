@@ -269,7 +269,8 @@ namespace LupinFarm.Tests
             var m = GameState.NewRun(1, 5);
             double before = Market.Price(m, "corn");
             m.Perks["market-sense"] = 2;
-            Assert.Equal(Math.Round(before * 1.06), Market.Price(m, "corn"), "price +6%");
+            // 화면 단가는 반올림한 값이라 1G 차이는 허용한다
+            Assert.True(Math.Abs(Market.Price(m, "corn") - before * 1.06) <= 1, "price +6%");
 
             // night-shift, rule-memory
             m.Perks["night-shift"] = 2;
